@@ -261,5 +261,5 @@ data_files <- list.files(
     full.names = TRUE
 )
 
-zip("data/external/data_codes.zip", data_files, flags = "-j")
+zip("data/external/extra/data_codes.zip", data_files, flags = "-j")
 
