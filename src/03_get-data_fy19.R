@@ -2,10 +2,9 @@ library(tidyverse)
 library(readxl)
 library(lubridate)
 library(edwr)
+library(openxlsx)
 
 dir_raw <- "data/raw/fy19"
-
-dirr::gzip_files(dir_raw)
 
 # patient list -----------------------------------------
 pts <- read_excel("data/external/fy19/patient_list.xlsx") %>%
@@ -39,15 +38,22 @@ data_patients <- pts %>%
     arrange(millennium.id, code.datetime) %>%
     distinct(millennium.id, .keep_all = TRUE)
 
-mbo_id <- concat_encounters(data_patients$millennium.id)
+# mbo_id <- concat_encounters(data_patients$millennium.id)
 
-mbo_id_split <- concat_encounters(data_patients$millennium.id, 300)
+mbo_id_split <- concat_encounters(data_patients$millennium.id, 75)
+
+print(mbo_id_split)
+
+# run MBO query
+#   * Resident Projects/code_blues/code_data
+#
+# extract zip files
+
+dirr::gzip_files(dir_raw, pattern = "*.csv", recursive = TRUE)
 
 # 01_demographics --------------------------------------
 
-print(mbo_id)
-
-data_demographics <- read_data(dir_raw, "demographics", FALSE) %>%
+data_demographics <- read_data(dir_raw, "demographics", FALSE, TRUE) %>%
     as.demographics(
         extras = c(
             "admit.datetime" = "Date and Time - Admit",
@@ -59,15 +65,13 @@ data_demographics <- read_data(dir_raw, "demographics", FALSE) %>%
 
 data_include <- data_patients %>%
     semi_join(data_demographics, by = "millennium.id") %>%
-    select(millennium.id, pie.id, code.datetime)
+    select(millennium.id, pie.id, fin, code.datetime)
 
 # 02_vitals --------------------------------------------
 
 # Clinical Event: Mean Arterial Pressure;Mean Arterial Pressure (Invasive);Systolic Blood Pressure;Arterial Systolic BP 1;Diastolic Blood Pressure;Arterial Diastolic BP 1;Apical Heart Rate;Peripheral Pulse Rate;Respiratory Rate;SpO2 percent
 
-print(mbo_id_split)
-
-data_vitals <- read_data(dir_raw, "vitals", FALSE) %>%
+data_vitals <- read_data(dir_raw, "vitals", FALSE, TRUE) %>%
     as.vitals() %>%
     inner_join(data_include, by = "millennium.id") %>%
     arrange(millennium.id, vital.datetime)
@@ -90,7 +94,7 @@ vitals_code <- data_vitals %>%
 
 # Clinical Event: Temperature Oral;Temperature Tympanic;Temperature Rectal;Temperature Axillary;Temperature Intravascular;Temperature Esophageal;Temperature;Temperature Bladder;Temperature Skin;Temperature Brain;Temperature Sensor
 
-data_temps <- read_data(dir_raw, "temps", FALSE) %>%
+data_temps <- read_data(dir_raw, "temps", FALSE, TRUE) %>%
     as.vitals() %>%
     inner_join(data_include, by = "millennium.id") %>%
     arrange(millennium.id, vital.datetime)
@@ -110,7 +114,7 @@ temps_code <- data_temps %>%
 
 # Lab Event: Hct;Hgb;WBC;POC A pH;POC A PO2;Creatinine Lvl;Potassium Lvl;Sodium Lvl
 
-data_labs <- read_data(dir_raw, "labs", FALSE) %>%
+data_labs <- read_data(dir_raw, "labs", FALSE, TRUE) %>%
     as.labs() %>%
     tidy_data() %>%
     inner_join(data_include, by = "millennium.id") %>%
@@ -132,7 +136,7 @@ labs_code <- data_labs %>%
 
 # 05_medications ---------------------------------------
 
-data_meds <- read_data(dir_raw, "meds", FALSE) %>%
+data_meds <- read_data(dir_raw, "meds", FALSE, TRUE) %>%
     as.meds_inpt() %>%
     inner_join(data_include, by = "millennium.id") %>%
     arrange(millennium.id, med.datetime)
@@ -144,7 +148,11 @@ meds_arrhythm <- data_meds %>%
     ) %>%
     distinct(millennium.id, med) %>%
     mutate(dose = TRUE) %>%
-    spread(med, dose)
+    spread(med, dose) %>%
+    rename(
+        pre.amiodarone = amiodarone,
+        pre.lidocaine = lidocaine
+    )
 
 meds_code <- data_meds %>%
     filter(
@@ -176,9 +184,7 @@ meds_electrolytes <- data_meds %>%
 
 # 06_locations -----------------------------------------
 
-print(mbo_id)
-
-data_locations <- read_data(dir_raw, "locations", FALSE) %>%
+data_locations <- read_data(dir_raw, "locations", FALSE, TRUE) %>%
     as.locations() %>%
     filter(depart.datetime <= today(tzone = "US/Central")) %>%
     tidy_data() %>%
@@ -197,12 +203,11 @@ location_code <- data_locations %>%
 
 # 07_measures ------------------------------------------
 
-print(mbo_id_split)
-
-data_measures <- read_data(dir_raw, "measures", FALSE) %>%
+data_measures <- read_data(dir_raw, "measures", FALSE, TRUE) %>%
     as.events(order_var = FALSE) %>%
     inner_join(data_include, by = "millennium.id") %>%
-    arrange(millennium.id, event.datetime)
+    arrange(millennium.id, event.datetime) %>%
+    mutate_at("event.result", as.numeric)
 
 weights_first <- data_measures %>%
     filter(event == "weight") %>%
@@ -211,21 +216,21 @@ weights_first <- data_measures %>%
 
 # 08_gcs -----------------------------------------------
 
-data_gcs <- read_data(dir_raw, "gcs", FALSE) %>%
+data_gcs <- read_data(dir_raw, "gcs", FALSE, TRUE) %>%
     as.events(order_var = FALSE) %>%
     inner_join(data_include, by = "millennium.id") %>%
     arrange(millennium.id, event.datetime)
 
 gcs_first <- data_gcs %>%
     filter(event == "glasgow coma score") %>%
-    distinct(millennium.id, .keep_all = TRUE)
+    mutate_at("event.result", as.numeric) %>%
+    distinct(millennium.id, .keep_all = TRUE) %>%
+    select(millennium.id, gcs = event.result)
 
 # 09_hypothermia ---------------------------------------
 
-print(mbo_id)
-
-data_hypothermia <- read_data(dir_raw, "hypothermia", FALSE) %>%
-    as.order_info()
+# data_hypothermia <- read_data(dir_raw, "hypothermia", FALSE, TRUE)
+#     as.order_info()
 
 # 10_readmission ---------------------------------------
 
@@ -251,7 +256,10 @@ data_readmits <- encounters %>%
     ) %>%
     arrange(person.id, encounter.datetime) %>%
     group_by(person.id) %>%
+    mutate(admit.id = if_else(!is.na(admit.datetime), millennium.id, NA_character_)) %>%
+    # mutate_at("admit.id", na_if, y = is.na(admit.d))
     fill(admit.datetime, .direction = "down") %>%
+    fill(admit.id, .direction = "down") %>%
     filter(
         !is.na(admit.datetime),
         disposition != "Cadaver Organ Donor"
@@ -269,7 +277,7 @@ data_readmits <- encounters %>%
     ) %>%
     ungroup() %>%
     select(
-        millennium.id,
+        millennium.id = admit.id,
         readmit.datetime = encounter.datetime,
         readmit.facility = facility,
         readmit.days
@@ -283,17 +291,78 @@ data_readmits <- encounters %>%
 
 tidy_patients <- data_demographics %>%
     left_join(data_readmits, by = "millennium.id") %>%
-    left_join(weights_first, by = "millennium.id")
+    left_join(weights_first, by = "millennium.id") %>%
+    left_join(
+        data_patients[c("millennium.id", "fin")],
+        by = "millennium.id"
+    ) %>%
+    select(
+        fin,
+        age,
+        gender,
+        race,
+        weight,
+        length.stay,
+        disposition,
+        admit.datetime,
+        discharge.datetime,
+        readmit.facility,
+        readmit.days
+    ) %>%
+    mutate_at("readmit.days", as.numeric)
 
 tidy_admit_vals <- temps_first %>%
     full_join(labs_first, by = "millennium.id") %>%
     full_join(vitals_first, by = "millennium.id") %>%
     full_join(gcs_first, by = "millennium.id") %>%
-    full_join(meds_arrhythm, by = "millennium.id")
+    full_join(
+        data_include[c("millennium.id", "fin")],
+        by = "millennium.id"
+    ) %>%
+    select(fin, everything(), -millennium.id)
 
-tidy_meds_post <- meds_code %>%
-    full_join(meds_electrolytes, by = "millennium.id")
+tidy_meds <- meds_code %>%
+    full_join(meds_electrolytes, by = "millennium.id") %>%
+    full_join(meds_arrhythm, by = "millennium.id") %>%
+    full_join(
+        data_include[c("millennium.id", "fin")],
+        by = "millennium.id"
+    ) %>%
+    select(fin, starts_with("pre."), everything(), -millennium.id) %>%
+    mutate_if(is.logical, funs(coalesce(., FALSE)))
 
+tidy_vitals <- vitals_code %>%
+    mutate(pre.code = vital.datetime < code.datetime) %>%
+    semi_join(data_include, by = "millennium.id") %>%
+    ungroup() %>%
+    select(fin, vital.datetime, vital, vital.result, pre.code) %>%
+    distinct(fin, vital.datetime, vital, .keep_all = TRUE) %>%
+    spread(vital, vital.result)
+
+tidy_temps <- temps_code %>%
+    mutate(pre.code = vital.datetime < code.datetime) %>%
+    semi_join(data_include, by = "millennium.id") %>%
+    ungroup() %>%
+    select(fin, vital.datetime, vital, vital.result, pre.code)
+
+tidy_labs <- labs_code %>%
+    mutate(pre.code = lab.datetime < code.datetime) %>%
+    semi_join(data_include, by = "millennium.id") %>%
+    ungroup() %>%
+    select(fin, lab.datetime, lab, lab.result, pre.code) %>%
+    distinct(fin, lab.datetime, lab, .keep_all = TRUE) %>%
+    spread(lab, lab.result)
+
+tidy_dataset <- list(
+    "patients" = tidy_patients,
+    "admit_values" = tidy_admit_vals,
+    "meds" = tidy_meds,
+    "vitals" = tidy_vitals,
+    "temps" = tidy_temps,
+    "labs" = tidy_labs
+)
+
+write.xlsx(tidy_dataset, "data/external/fy19/patient_data.xlsx")
 
 # old --------------------------------------------------
 
