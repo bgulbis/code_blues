@@ -90,6 +90,15 @@ vitals_code <- data_vitals %>%
         vital.datetime <= code.datetime + hours(12)
     )
 
+vitals_minmax <- data_vitals %>%
+    group_by(millennium.id, vital) %>%
+    left_join(
+        data_demographics[c("millennium.id", "admit.datetime")],
+        by = "millennium.id"
+    ) %>%
+    filter(vital.datetime <= admit.datetime + hours(24)) %>%
+    summarize_at("vital.result", funs(min, max), na.rm = TRUE)
+
 # 03_temperatures --------------------------------------
 
 # Clinical Event: Temperature Oral;Temperature Tympanic;Temperature Rectal;Temperature Axillary;Temperature Intravascular;Temperature Esophageal;Temperature;Temperature Bladder;Temperature Skin;Temperature Brain;Temperature Sensor
@@ -109,6 +118,15 @@ temps_code <- data_temps %>%
         vital.datetime >= code.datetime - hours(6),
         vital.datetime <= code.datetime + hours(12)
     )
+
+temps_minmax <- data_temps %>%
+    group_by(millennium.id) %>%
+    left_join(
+        data_demographics[c("millennium.id", "admit.datetime")],
+        by = "millennium.id"
+    ) %>%
+    filter(vital.datetime <= admit.datetime + hours(24)) %>%
+    summarize_at("vital.result", funs(min, max), na.rm = TRUE)
 
 # 04_labs ----------------------------------------------
 
@@ -133,6 +151,15 @@ labs_code <- data_labs %>%
         lab.datetime >= code.datetime - hours(6),
         lab.datetime <= code.datetime + hours(12)
     )
+
+labs_minmax <- data_labs %>%
+    group_by(millennium.id, lab) %>%
+    left_join(
+        data_demographics[c("millennium.id", "admit.datetime")],
+        by = "millennium.id"
+    ) %>%
+    filter(lab.datetime <= admit.datetime + hours(24)) %>%
+    summarize_at("lab.result", funs(min, max), na.rm = TRUE)
 
 # 05_medications ---------------------------------------
 
@@ -226,6 +253,17 @@ gcs_first <- data_gcs %>%
     mutate_at("event.result", as.numeric) %>%
     distinct(millennium.id, .keep_all = TRUE) %>%
     select(millennium.id, gcs = event.result)
+
+gcs_minmax <- data_gcs %>%
+    filter(event == "glasgow coma score") %>%
+    group_by(millennium.id) %>%
+    left_join(
+        data_demographics[c("millennium.id", "admit.datetime")],
+        by = "millennium.id"
+    ) %>%
+    filter(event.datetime <= admit.datetime + hours(24)) %>%
+    summarize_at("event.result", funs(min, max), na.rm = TRUE)
+
 
 # 09_hypothermia ---------------------------------------
 
@@ -363,6 +401,49 @@ tidy_dataset <- list(
 )
 
 write.xlsx(tidy_dataset, "data/external/fy19/patient_data.xlsx")
+
+# admission min / max values ---------------------------
+
+tidy_minmax_vitals <- vitals_minmax %>%
+    ungroup() %>%
+    full_join(
+        data_include[c("millennium.id", "fin")],
+        by = "millennium.id"
+    ) %>%
+    select(fin, everything(), -millennium.id)
+
+tidy_minmax_temps <- temps_minmax %>%
+    ungroup() %>%
+    full_join(
+        data_include[c("millennium.id", "fin")],
+        by = "millennium.id"
+    ) %>%
+    select(fin, everything(), -millennium.id)
+
+tidy_minmax_labs <- labs_minmax %>%
+    ungroup() %>%
+    full_join(
+        data_include[c("millennium.id", "fin")],
+        by = "millennium.id"
+    ) %>%
+    select(fin, everything(), -millennium.id)
+
+tidy_minmax_gcs <- gcs_minmax %>%
+    ungroup() %>%
+    full_join(
+        data_include[c("millennium.id", "fin")],
+        by = "millennium.id"
+    ) %>%
+    select(fin, everything(), -millennium.id)
+
+tidy_minmax_dataset <- list(
+    "vitals" = tidy_minmax_vitals,
+    "temps" = tidy_minmax_temps,
+    "labs" = tidy_minmax_labs,
+    "gcs" = tidy_minmax_gcs
+)
+
+write.xlsx(tidy_minmax_dataset, "data/external/fy19/admit_min-max.xlsx")
 
 # old --------------------------------------------------
 
