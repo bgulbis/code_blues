@@ -5,18 +5,18 @@ library(lubridate)
 library(MatchIt)
 library(openxlsx)
 
-pts <- read_excel(
-    "U:/Data/code_blues/external/fy20/patients.xlsx",
-    col_names = c("id", "fin"),
-    skip = 1
-)
-
-mbo_fin <- concat_encounters(pts$fin)
-print(mbo_fin)
+# pts <- read_excel(
+#     "U:/Data/code_blues/external/fy20/patients.xlsx",
+#     col_names = c("id", "fin"),
+#     skip = 1
+# )
+#
+# mbo_fin <- concat_encounters(pts$fin)
+# print(mbo_fin)
 
 # matching ---------------------------------------------
 
-df <- read_excel("U:/Data/code_blues/external/fy20/data_ada_matching.xlsx") %>%
+df <- read_excel("U:/Data/code_blues/external/fy20/data_ada_matching_2020-06-15.xlsx") %>%
     select(
         id = `Patient number`,
         fin = FIN,
